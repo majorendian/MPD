@@ -16,10 +16,14 @@
 # You should have received a copy of the GNU General Public License
 # along with MPD.  If not, see <https://www.gnu.org/licenses/>.
 
+package MPD;
+
 use Gtk3 -init;
 use strict;
 use File::Spec;
 use autodie;
+use Module::Load;
+use Data::Dumper;
 
 #
 # Predeclarations
