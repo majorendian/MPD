@@ -24,12 +24,13 @@ use File::Spec;
 use autodie;
 use Module::Load;
 use Data::Dumper;
+use IPC::Open2;
 
 #
 # Predeclarations
 #
 
-sub showDefaultDialog($$);
+sub showDefaultDialog($$$);
 
 use constant {
 	EDITION_MUPEN64PLUS => 1,
@@ -60,7 +61,15 @@ our %Settings = (
 	patchfileDir => undef, #directory for fun runtime-patches to apply
 );
 
+# Perl console related
+
+my $perlpid = undef; # PID of perl subprocess (tpsh)
+my $perlin = undef; # Input to perl interp.
+my $perlout = undef; # Output from perl interp.
+
 # Debugging related
+
+
 sub _view_symbols_of_pkg{
 	my $pkg = shift;
 	my @k =  sort keys %$pkg::;
@@ -77,8 +86,8 @@ sub loadBackend($){
 	autoload $backend;
 	my $test_backend = undef;
 	eval { $test_backend = Debugger() };
-	unless(defined $test_backend){
-		showDefaultDialog "Error", "Backend error\n[$backend]\n";
+	unless(defined $test_backend and $@){
+		showErrorReport($@);
 	}
 }
 
@@ -105,15 +114,8 @@ sub storeConfig(){
 }
 
 sub initMPD(){
-	if($EDITION == EDITION_MUPEN64PLUS){
-		loadBackend("MPD::Backend::Mupen64plus");
-	}
-	loadConfig;
-
 	$builder = Gtk3::Builder->new;
 	$builder->add_from_file("res/gui.glade");
-
-
 	$toplevel = $builder->get_object("toplevel");
 
 	# enable toolbar buttons
@@ -129,6 +131,23 @@ sub initMPD(){
 	$builder->connect_signals(undef);
 
 	$toplevel->signal_connect("destroy", \&quit);
+
+	$toplevel->show;
+
+	if($EDITION == EDITION_MUPEN64PLUS){
+		loadBackend("MPD::Backend::Mupen64plus");
+		# my $config = autoconfigure;
+		# %Settings = %$config;
+	}
+	loadConfig;
+
+	# Start necessary sub-processes
+	$perlpid = open2($perlout, $perlin, 'tpsh');
+	if($perlpid){
+		setTextOf("perl_console", "tpsh> ");
+	}
+
+
 	return $toplevel;
 
 }
@@ -136,7 +155,7 @@ sub initMPD(){
 # Show and start main loop
 
 sub mainMPD(){
-	initMPD->show;
+	initMPD;
 	Gtk3->main;
 }
 
@@ -159,27 +178,34 @@ sub closeDialog{
 # Helpers
 #
 
-sub runDialog(&$$){
+sub runDialog(&$$;$){
 	my $code = shift;
 	my $title = shift;
 	my $message = shift;
+	my $image = shift;
 	my $dialog = Gtk3::Dialog->new($title, $toplevel, "GTK_DIALOG_MODAL",
 		Ok => 1,
 	);
+	my $box = $dialog->get_content_area;
+	if(defined $image){
+		my $img = Gtk3::Image->new;
+		$img->set_from_file("res/$image.png");
+		$img->show;
+		$box->add($img);
+	}
 	my $label = Gtk3::Label->new();
 	$label->set_text($message);
-	my $box = $dialog->get_content_area;
 	$box->add($label);
 	$label->show;
 	$dialog->signal_connect("response", $code);
 	$dialog->run;
 }
 
-sub showDefaultDialog($$){
+sub showDefaultDialog($$$){
 	runDialog {
 		my $w = shift;
 		$w->destroy;
-	} shift, shift;
+	} shift, shift, shift;
 }
 
 sub getTextOf($){
@@ -196,11 +222,11 @@ sub setTextOf($$){
 
 sub openDebuggerCLI{
 	if(defined $ROM and -f $ROM){
-		my $pid = open2(my $chldin, my $chldout, "mupen64plus","--debug",$ROM);
+		my $pid = open2(my $chldout, my $chldin, "mupen64plus","--debug",$ROM);
 		$DBG_PID = $pid;
 		return ($chldin, $chldout);
 	}else{
-		showDefaultDialog("Error","No ROM specified.\nPlease select a ROM first.");
+		showDefaultDialog("Error","No ROM specified.\nPlease select a ROM first.","error");
 	}
 }
 
@@ -215,11 +241,27 @@ sub showAbout{
 	$about->show;
 }
 
-sub showSettings{
+sub showSettings($){
 	my $w = shift;
 	my $settings = $builder->get_object("settings_window");
 	$settings->signal_connect("destroy", \&closeDialog);
 	$settings->show;
+}
+
+sub showErrorReport($){
+	my $w = $builder->get_object("error_report_window");
+	$w->set_parent($toplevel);
+	my $textbuff = $builder->get_object("error_box")->get_buffer();
+	my $errbtn_ok = $builder->get_object("errbtn_ok");
+	$textbuff->set_text(shift);
+	my $eh = sub {
+		$w->destroy;
+		return 1;
+	};
+	$w->signal_connect("destroy", $eh);
+	$errbtn_ok->signal_connect("clicked", $eh);
+	$w->show;
+	$w->activate_focus;
 }
 
 #
@@ -291,12 +333,50 @@ sub dbgConsole{
 	return 0;
 }
 
+my $keygather = "";
+my $consolebuffer = "";
+sub perlConsole(){
+	my $w = shift;
+	my $c = shift->keyval;
+	if($perlpid and $c == Gtk3::Gdk::KEY_Return){
+		my $cmd = getTextOf("perl_console");
+		$cmd =~ (m/tpsh>(.+?)\n?/)[0];
+		chomp $cmd;
+		print $perlin $cmd;
+		print $perlin "\n";
+		flush $perlin;
+		use IO::Select;
+		my $selector = IO::Select->new;
+		$selector->add($perlin);
+		my $r = "";
+		PCMD_READIN:
+		my $br = read $perlout, $r, 4096;
+		if($br != 4096 or not $selector->can_read(0.5)){
+			goto PCMD_WOUT;
+		}else{
+			goto PCMD_READIN;
+		}
+		PCMD_WOUT:
+		$consolebuffer .= $r;
+		$keygather = "";
+	}elsif($c == Gtk3::Gdk::KEY_Delete){
+		chop $keygather;
+		chop $consolebuffer;
+	}else{
+		$keygather .= chr($c);
+		$consolebuffer .= $keygather;
+	}
+	setTextOf("perl_console","tpsh> " . $consolebuffer);
+}
+
 #
 # Quit and other functions
 #
 
 sub quit{
 	Gtk3::main_quit;
+	kill 9, $perlpid if $perlpid;
+	kill 9, $DBG_PID if $DBG_PID;
 	wait;
 	storeConfig;
 	exit 0;

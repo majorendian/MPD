@@ -1,5 +1,6 @@
 # Author: Ernest Deak
 # License: GPLv3
+
 # This file is part of MPD.
 # 
 # MPD is free software: you can redistribute it and/or modify
@@ -14,6 +15,16 @@
 # 
 # You should have received a copy of the GNU General Public License
 # along with MPD.  If not, see <https://www.gnu.org/licenses/>.
+
+# NOTE: This package is to be treated as purely virtual
+# One just uses this as base for the backends and these
+# inherited functions will generate an error if one is not
+# implemented as expected. It also provides common routines
+# to handle autoconfiguration so that the user doesnt have
+# to configure everything himself.
+# Naturally threre is room for error so we provide a simple
+# settings interface (not in this file)
+
 package MPD::Backend;
 use Carp qw(confess);
 
@@ -25,6 +36,11 @@ sub DebuggerCommands { confess "Abstract interface"; }
 sub AssemblerPath { confess "Abstract interface"; }
 sub CompilerPath { confess "Abstract interface"; }
 sub DebuggerPath { confess "Abstract interface"; }
+
+sub instance(){
+  my $pkg = shift;
+  blessed;
+}
 
 sub bprint(@){
   print __PACKAGE__ . ": " . join " | ", @_ . "\n";
@@ -52,7 +68,31 @@ sub commandCheck(){
   }
 }
 
+sub unixAutoconfig($$){
+  my $cmd = shift;
+  my $packageParam = shift;
+  my $exepath = qx/whereis $cmd/;
+  $exepath =~ s/.+:\s//;
+  chomp $exepath;
+  $__PACKAGE__{$packageParam} = sub { return $exepath; };
+  return $exepath;
+}
+
+
+sub win32Autoconfig($$){
+  confess "Autoconfiguration is not implemented for windows";
+}
+
 sub autoconfigure(){
+  if($^O =~ m/unix|linux/){
+    unixAutoconfig(Debugger()->[0], 'DebuggerPath');
+    unixAutoconfig(Assembler()->[0], 'AssemblerPath');
+    unixAutoconfig(Compiler()->[0], 'CompilerPath');
+  }elsif($^O =~ m/win32|windows/){
+    win32Autoconfig(Debugger()->[0], 'DebuggerPath');
+    win32Autoconfig(Assembler()->[0], 'AssemblerPath');
+    win32Autoconfig(Compiler()->[0], 'CompilerPath');
+  }
   if(-e DebuggerPath()){
     bprint "Found debbuger [".DebuggerPath()."]...";
   }else{

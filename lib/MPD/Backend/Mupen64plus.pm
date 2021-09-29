@@ -25,10 +25,9 @@ use Exporter qw(import);
 our $pipehandleIn = undef;
 our $pipehandleOut = undef;
 
-our @EXPORT = qw(
+our @EXPORT_OK = qw(
   Debugger
   DebuggerCommands
-  autoconfigure
 );
 
 use constant {
