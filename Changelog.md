@@ -7,7 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ---
 ## [Unreleased]
 
-## [**1.0.0**] - 2021-09-28
+## [**0.1.1**] - 2021-10-03
+  - Perl console added
+  - Version change from 1.0.0 to 0.1.0 (see git commits)
+  - Unbuffered read input from terminals
+  - Planed support for:
+      gdb, mupen64plus --debug, qemu-gdb debugging
+      pure qemu debugger
+  - Custom icon graphics instead of stock graphics
+  - VERSION fetch from gui.glade file
+  - Console version string on start-up
+
+## [**0.1.0**] - 2021-09-28
   - Initial version
   - Basic GUI
   - mupen64plus backend in alpha stage (untested)

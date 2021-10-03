@@ -39,6 +39,14 @@ use constant {
 	EDITION_LEGENDARY => 7
 };
 
+sub VERSION(){
+	open my $fh, "<", "res/gui.glade";
+	while(<$fh>){
+		m/<property name="version">(.+)<\/property>/;
+		close $fh and return $1 if defined $1;
+	}
+}
+
 my %Backends = (
 	'mupen64plus' => 'MPD::Backend::Mupen64plus',
 	'gdb-x86-64' => 'MPD::Backend::GDBX86',
@@ -144,10 +152,10 @@ sub initMPD(){
 	# Start necessary sub-processes
 	$perlpid = open2($perlout, $perlin, 'tpsh');
 	if($perlpid){
-		setTextOf("perl_console", "tpsh> ");
+		setTextOf("perl_console", perlShellGetOutput());
 	}
 
-
+	print "Starting MPD version: " . VERSION() . "\n";
 	return $toplevel;
 
 }
@@ -333,40 +341,40 @@ sub dbgConsole{
 	return 0;
 }
 
+sub perlShellGetOutput(){
+	my $buff = "";
+	my $buffsize = 4096;
+	_PSGORIN:
+	my $br = sysread($perlout, $buff, $buffsize);
+	goto _PSGORIN if $br == $buffsize;
+	print $buff . "\n";
+	return $buff;
+}
+
 my $keygather = "";
 my $consolebuffer = "";
 sub perlConsole(){
 	my $w = shift;
 	my $c = shift->keyval;
 	if($perlpid and $c == Gtk3::Gdk::KEY_Return){
+		# FIXME: Get only last line of text
+		# TODO: Turn off that strange effect when scrolling
 		my $cmd = getTextOf("perl_console");
-		$cmd =~ (m/tpsh>(.+?)\n?/)[0];
+		$cmd =~ (m/>(.+)\z/)[0];
 		chomp $cmd;
 		print $perlin $cmd;
 		print $perlin "\n";
 		flush $perlin;
-		use IO::Select;
-		my $selector = IO::Select->new;
-		$selector->add($perlin);
-		my $r = "";
-		PCMD_READIN:
-		my $br = read $perlout, $r, 4096;
-		if($br != 4096 or not $selector->can_read(0.5)){
-			goto PCMD_WOUT;
-		}else{
-			goto PCMD_READIN;
-		}
-		PCMD_WOUT:
-		$consolebuffer .= $r;
+		$consolebuffer = perlShellGetOutput . "\n";
 		$keygather = "";
-	}elsif($c == Gtk3::Gdk::KEY_Delete){
+	}elsif($c == Gtk3::Gdk::KEY_BackSpace){
 		chop $keygather;
 		chop $consolebuffer;
 	}else{
 		$keygather .= chr($c);
-		$consolebuffer .= $keygather;
+		$consolebuffer = $keygather;
 	}
-	setTextOf("perl_console","tpsh> " . $consolebuffer);
+	setTextOf("perl_console",$consolebuffer);
 }
 
 #
